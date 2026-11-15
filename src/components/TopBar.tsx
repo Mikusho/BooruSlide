@@ -3,14 +3,16 @@ import type { AppView } from '../types/booru';
 interface TopBarProps {
   activeView: AppView;
   onNavigate: (view: AppView) => void;
+  favoritesCount: number;
   localCount: number;
   onOpenSettings: () => void;
 }
 
-export function TopBar({ activeView, onNavigate, localCount, onOpenSettings }: TopBarProps) {
+export function TopBar({ activeView, onNavigate, favoritesCount, localCount, onOpenSettings }: TopBarProps) {
   const navItems: { id: AppView; label: string }[] = [
     { id: 'slideshow', label: 'Slideshow' },
     { id: 'grid', label: 'Grid' },
+    { id: 'favorites', label: favoritesCount > 0 ? `Favorites (${favoritesCount})` : 'Favorites' },
     { id: 'local', label: localCount > 0 ? `Local Gallery (${localCount})` : 'Local Gallery' },
     { id: 'presets', label: 'Presets' },
   ];

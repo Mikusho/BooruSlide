@@ -18,10 +18,10 @@ A web-based slideshow theater and collection browser inspired by [BooruSlideshow
 - **Sort & Client Filters**: Sort by `Newest`, `Top Score`, `Updated`, or `Random`, plus client-side `Aspect Ratio` (`Landscape`, `Portrait`, `Square`) and `Min Score` filtering.
 
 ### 3. Slideshow Theater & Smart Preloading
-- **Theater Viewport**: Full-viewport display with `Fit`, `Fill`, and `1:1` zoom modes, auto-hide HUD, fullscreen mode, and a scrollable thumbnail filmstrip.
+- **Theater Viewport & Media Controls**: Full-viewport display with `Fit`, `Fill`, and `1:1` zoom modes, interactive zoom (`25%`–`500%` via toolbar, mouse wheel, or double-click), click-and-drag pan when zoomed, 90° rotate, horizontal/vertical flip, one-click reset, auto-hide HUD, fullscreen mode, and a scrollable thumbnail filmstrip.
 - **Loading Progress & File Size**:
   - Images and GIFs display a real-time download progress bar, percentage, transferred/total bytes, and final file size in both the metadata scrim and **Post Inspector**.
-  - Videos stream natively with HTTP Range (`206 Partial Content`) caching and autoplay without blocking loading overlays.
+  - Videos stream natively with HTTP Range (`206 Partial Content`) caching, autoplay, play/pause, ±5s skip, playback speed (`0.5x`–`2x`), volume slider, and zoom/rotate support without blocking loading overlays.
 - **Load-Gated Countdown Timer**: Auto-advance countdown starts only *after* the active slide finishes loading so slower files are never skipped early.
 - **Custom Intervals**: Choose preset intervals (`3s`, `5s`, `6s`, `8s`, `15s`, `30s`) or enter any custom duration (`1s`–`3600s`).
 - **Ahead Slide Caching**: Background-prefetches upcoming slides (`0`, `2`, `3`, `5`, or `8` slides ahead) into an LRU in-memory `Blob` cache for instant forward navigation.
@@ -31,9 +31,10 @@ A web-based slideshow theater and collection browser inspired by [BooruSlideshow
 - **Optional Browser Folder Sync**: Sync saved files directly to a chosen local directory via the File System Access API (`showDirectoryPicker`) in supported Chromium browsers.
 - **Offline Local Slideshow**: Browse, filter by tag/filename, delete files, or launch a local slideshow directly from the **Local Gallery** view.
 
-### 5. Tag Presets & Link Copying
+### 5. Favorites, Tag Presets & Link Copying
+- **Favorites Gallery (No Disk Download)**: Bookmark posts (`L` shortcut, slideshow control panel button, or Grid cards) into the dedicated **Favorites** tab. Favorites store post references only and stream online without downloading files to your local gallery.
 - Launch built-in or user-saved tag + rating presets straight into **Slideshow** or **Grid** view.
-- One-click **Copy Link** (`C` shortcut or action buttons in Slideshow, Post Inspector, and Grid cards) copies the direct media file URL to your clipboard.
+- One-click **Copy Link** (`C` shortcut or action buttons in Slideshow, Post Inspector, Favorites, and Grid cards) copies the direct media file URL to your clipboard.
 
 ## Keyboard Shortcuts (Slideshow View)
 
@@ -42,11 +43,16 @@ A web-based slideshow theater and collection browser inspired by [BooruSlideshow
 | `Space` | Play / Pause slideshow |
 | `←` / `→` | Previous / Next slide |
 | `D` or `S` | Save current file to local gallery folder |
+| `L` | Bookmark / Remove current post in Favorites (no download) |
 | `C` | Copy direct media file link to clipboard |
 | `I` | Toggle Post Inspector (metadata & clickable tags) |
 | `H` | Hide / Show HUD controls |
 | `F` | Toggle fullscreen |
 | `1` / `2` / `3` | Switch `Fit` / `Fill` / `1:1` display mode |
+| `+` / `-` | Zoom in / out (`25%`–`500%`) |
+| `0` | Reset zoom, pan, rotation, and flip |
+| `R` / `Shift+R` | Rotate +90° / -90° |
+| `K` / `M` | Play/Pause video · Mute/Unmute video |
 
 ## Tech Stack
 

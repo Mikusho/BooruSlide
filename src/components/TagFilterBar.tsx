@@ -146,8 +146,20 @@ export function TagFilterBar({
         setShowMediaMenu(false);
       }
     };
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setShowSuggestions(false);
+        setShowSourcesMenu(false);
+        setShowRatingsMenu(false);
+        setShowMediaMenu(false);
+      }
+    };
     document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleEscape);
+    };
   }, []);
 
   const applySuggestion = (tagName: string) => {
@@ -231,7 +243,7 @@ export function TagFilterBar({
   return (
     <section
       aria-label="Tag search and collection filters"
-      className="border-b border-zinc-800/90 bg-[#111114] px-3 sm:px-4 lg:px-6 py-2.5 sm:py-3 shrink-0 z-20"
+      className="relative z-30 border-b border-zinc-800/90 bg-[#111114] px-3 sm:px-4 lg:px-6 py-2.5 sm:py-3 shrink-0"
     >
       <div className="max-w-[1600px] mx-auto flex flex-col gap-2">
         <div className="flex flex-wrap items-center gap-2">

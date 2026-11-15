@@ -1,3 +1,3 @@
 export * from '../lib/booru';
 
-export type AppView = 'slideshow' | 'grid' | 'local' | 'presets';
+export type AppView = 'slideshow' | 'grid' | 'favorites' | 'local' | 'presets';

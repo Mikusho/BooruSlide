@@ -10,6 +10,9 @@ import {
   Eye,
   EyeOff,
   Film,
+  FlipHorizontal2,
+  FlipVertical2,
+  Heart,
   ImageOff,
   Info,
   Loader2,
@@ -19,13 +22,30 @@ import {
   Play,
   Plus,
   Repeat,
+  RotateCcw,
+  RotateCw,
   Shuffle,
+  SkipBack,
+  SkipForward,
   Slash,
   Volume2,
   VolumeX,
+  ZoomIn,
+  ZoomOut,
 } from 'lucide-react';
 import { BOARD_LABELS, formatBytes } from '../lib/booru';
 import { sharedMediaCache, type MediaLoadProgress } from '../lib/mediaCache';
+import {
+  buildMediaTransformStyle,
+  clampPan,
+  DEFAULT_MEDIA_TRANSFORM,
+  formatMediaDuration,
+  isTransformModified,
+  MAX_ZOOM,
+  MIN_ZOOM,
+  stepZoom,
+  type MediaTransformState,
+} from '../lib/mediaTransform';
 import type { BooruPost, SlideFitMode } from '../types/booru';
 
 const PRESET_INTERVALS = [3, 5, 6, 8, 15, 30];
@@ -51,8 +71,10 @@ interface SlideshowStageProps {
   onLoadMore: () => void;
   onSavePost: (post: BooruPost) => Promise<void>;
   onCopyFileLink: (post: BooruPost) => Promise<boolean>;
+  onToggleFavorite: (post: BooruPost) => void;
   savingIds: Set<string>;
   savedKeys: Set<string>;
+  favoriteKeys: Set<string>;
   onSearchTag: (tag: string) => void;
   onIncludeTag: (tag: string) => void;
   onBlacklistTag: (tag: string) => void;
@@ -83,8 +105,10 @@ export function SlideshowStage({
   onLoadMore,
   onSavePost,
   onCopyFileLink,
+  onToggleFavorite,
   savingIds,
   savedKeys,
+  favoriteKeys,
   onSearchTag,
   onIncludeTag,
   onBlacklistTag,
@@ -99,6 +123,15 @@ export function SlideshowStage({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isMuted, setIsMuted] = useState(true);
   const [copiedLink, setCopiedLink] = useState(false);
+
+  // Image/media transform (zoom, pan, rotate, flip) & video transport state
+  const [transform, setTransform] = useState<MediaTransformState>(DEFAULT_MEDIA_TRANSFORM);
+  const [isDraggingPan, setIsDraggingPan] = useState(false);
+  const [videoPaused, setVideoPaused] = useState(false);
+  const [videoCurrentTime, setVideoCurrentTime] = useState(0);
+  const [videoDuration, setVideoDuration] = useState(0);
+  const [videoRate, setVideoRate] = useState(1);
+  const [videoVolume, setVideoVolume] = useState(0.8);
 
   // Media download + cache + load readiness state
   const [resolvedMediaSrc, setResolvedMediaSrc] = useState<string>('');
@@ -122,8 +155,17 @@ export function SlideshowStage({
   const [customInput, setCustomInput] = useState(String(intervalSeconds));
 
   const stageRootRef = useRef<HTMLDivElement>(null);
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
   const filmstripRef = useRef<HTMLDivElement>(null);
   const copyTimerRef = useRef<number | null>(null);
+  const dragStateRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    originX: number;
+    originY: number;
+  } | null>(null);
 
   const currentPost = posts[currentIndex] ?? null;
   const rawMediaUrl = useMemo(() => {
@@ -140,7 +182,26 @@ export function SlideshowStage({
 
   useEffect(() => {
     setCopiedLink(false);
+    setTransform(DEFAULT_MEDIA_TRANSFORM);
+    setIsDraggingPan(false);
+    setVideoPaused(false);
+    setVideoCurrentTime(0);
+    setVideoDuration(0);
+    dragStateRef.current = null;
   }, [currentPost?.board, currentPost?.id]);
+
+  useEffect(() => {
+    setTransform(DEFAULT_MEDIA_TRANSFORM);
+    setIsDraggingPan(false);
+    dragStateRef.current = null;
+  }, [fitMode]);
+
+  useEffect(() => {
+    const vid = videoRef.current;
+    if (!vid) return;
+    vid.playbackRate = videoRate;
+    vid.volume = videoVolume;
+  }, [videoRate, videoVolume, resolvedMediaSrc]);
 
   useEffect(() => {
     return () => {
@@ -391,6 +452,141 @@ export function SlideshowStage({
     }
   };
 
+  const zoomIn = () => {
+    setTransform((prev) => ({
+      ...prev,
+      zoom: stepZoom(prev.zoom, 'in'),
+    }));
+  };
+
+  const zoomOut = () => {
+    setTransform((prev) => {
+      const nextZoom = stepZoom(prev.zoom, 'out');
+      const clamped = clampPan({ x: prev.panX, y: prev.panY }, nextZoom);
+      return {
+        ...prev,
+        zoom: nextZoom,
+        panX: clamped.x,
+        panY: clamped.y,
+      };
+    });
+  };
+
+  const resetTransform = () => {
+    setTransform(DEFAULT_MEDIA_TRANSFORM);
+    setIsDraggingPan(false);
+    dragStateRef.current = null;
+  };
+
+  const rotateBy = (degrees: number) => {
+    setTransform((prev) => ({
+      ...prev,
+      rotation: prev.rotation + degrees,
+    }));
+  };
+
+  const toggleFlipH = () => {
+    setTransform((prev) => ({ ...prev, flipH: !prev.flipH }));
+  };
+
+  const toggleFlipV = () => {
+    setTransform((prev) => ({ ...prev, flipV: !prev.flipV }));
+  };
+
+  const toggleDoubleClickZoom = () => {
+    setTransform((prev) => {
+      if (prev.zoom > 1.05) {
+        return { ...prev, zoom: 1, panX: 0, panY: 0 };
+      }
+      return { ...prev, zoom: 2 };
+    });
+  };
+
+  const toggleVideoPlay = () => {
+    const vid = videoRef.current;
+    if (!vid) return;
+    if (vid.paused) {
+      void vid.play().catch(() => undefined);
+      setVideoPaused(false);
+    } else {
+      vid.pause();
+      setVideoPaused(true);
+    }
+  };
+
+  const seekVideoBy = (deltaSeconds: number) => {
+    const vid = videoRef.current;
+    if (!vid) return;
+    const maxTime = Number.isFinite(vid.duration) ? vid.duration : vid.currentTime + Math.max(0, deltaSeconds);
+    const next = Math.min(maxTime, Math.max(0, vid.currentTime + deltaSeconds));
+    vid.currentTime = next;
+    setVideoCurrentTime(next);
+  };
+
+  // Mouse wheel zoom directly inside viewport (in 1:1 mode, require Ctrl/Meta so scrollbars work normally)
+  useEffect(() => {
+    const el = viewportRef.current;
+    if (!el || !currentPost) return;
+
+    const handleWheel = (e: WheelEvent) => {
+      if (fitMode === 'actual' && !e.ctrlKey && !e.metaKey) return;
+      if (currentPost.mediaType === 'video' && !e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      const direction = e.deltaY < 0 ? 'in' : 'out';
+      setTransform((prev) => {
+        const nextZoom = stepZoom(prev.zoom, direction, 0.15);
+        const clamped = clampPan({ x: prev.panX, y: prev.panY }, nextZoom);
+        return {
+          ...prev,
+          zoom: nextZoom,
+          panX: clamped.x,
+          panY: clamped.y,
+        };
+      });
+    };
+
+    el.addEventListener('wheel', handleWheel, { passive: false });
+    return () => el.removeEventListener('wheel', handleWheel);
+  }, [currentPost, fitMode]);
+
+  const handleViewportPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (transform.zoom <= 1 || e.button !== 0) return;
+    const target = e.target as HTMLElement | null;
+    if (target?.closest('button, input, select, a, [data-testid="media-controls-bar"]')) return;
+    if (currentPost?.mediaType === 'video') return;
+
+    e.currentTarget.setPointerCapture(e.pointerId);
+    dragStateRef.current = {
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      originX: transform.panX,
+      originY: transform.panY,
+    };
+    setIsDraggingPan(true);
+  };
+
+  const handleViewportPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const drag = dragStateRef.current;
+    if (!drag || drag.pointerId !== e.pointerId) return;
+    const dx = e.clientX - drag.startX;
+    const dy = e.clientY - drag.startY;
+    setTransform((prev) => {
+      const clamped = clampPan({ x: drag.originX + dx, y: drag.originY + dy }, prev.zoom);
+      return { ...prev, panX: clamped.x, panY: clamped.y };
+    });
+  };
+
+  const handleViewportPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    const drag = dragStateRef.current;
+    if (!drag || drag.pointerId !== e.pointerId) return;
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    }
+    dragStateRef.current = null;
+    setIsDraggingPan(false);
+  };
+
   // Global keyboard shortcuts (ignored while typing in inputs/selects)
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -429,6 +625,27 @@ export function SlideshowStage({
       } else if ((e.key === 'd' || e.key === 'D' || e.key === 's' || e.key === 'S') && currentPost && !isOfflineLocalMode) {
         e.preventDefault();
         void onSavePost(currentPost);
+      } else if ((e.key === 'l' || e.key === 'L') && currentPost && !isOfflineLocalMode && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        onToggleFavorite(currentPost);
+      } else if (e.key === '+' || e.key === '=') {
+        e.preventDefault();
+        zoomIn();
+      } else if (e.key === '-' || e.key === '_') {
+        e.preventDefault();
+        zoomOut();
+      } else if (e.key === '0') {
+        e.preventDefault();
+        resetTransform();
+      } else if ((e.key === 'r' || e.key === 'R') && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        rotateBy(e.shiftKey ? -90 : 90);
+      } else if ((e.key === 'm' || e.key === 'M') && currentPost?.mediaType === 'video') {
+        e.preventDefault();
+        setIsMuted((m) => !m);
+      } else if ((e.key === 'k' || e.key === 'K') && currentPost?.mediaType === 'video') {
+        e.preventDefault();
+        toggleVideoPlay();
       } else if (e.key === '1') {
         onFitModeChange('contain');
       } else if (e.key === '2') {
@@ -445,6 +662,7 @@ export function SlideshowStage({
   const postKey = currentPost ? `${currentPost.board}_${currentPost.id}` : '';
   const isSaving = postKey ? savingIds.has(postKey) : false;
   const isSaved = postKey ? savedKeys.has(postKey) : false;
+  const isFavorited = postKey ? favoriteKeys.has(postKey) : false;
 
   const effectiveHudHidden = hudHidden || (autoHideHud && isPlaying);
 
@@ -480,6 +698,9 @@ export function SlideshowStage({
 
   const isMediaDownloading = currentPost.mediaType !== 'video' && !mediaLoaded && !mediaError;
   const loadingBarPercent = loadProgress.percent;
+  const transformModified = isTransformModified(transform);
+  const mediaTransformCss = buildMediaTransformStyle(transform);
+  const zoomPercent = Math.round(transform.zoom * 100);
 
   return (
     <div
@@ -510,8 +731,19 @@ export function SlideshowStage({
       <div className="flex-1 flex min-h-0 relative">
         {/* Media Viewport */}
         <div
+          ref={viewportRef}
+          onPointerDown={handleViewportPointerDown}
+          onPointerMove={handleViewportPointerMove}
+          onPointerUp={handleViewportPointerUp}
+          onPointerCancel={handleViewportPointerUp}
           className={`flex-1 relative flex items-center justify-center min-w-0 min-h-0 ${
             fitMode === 'actual' ? 'overflow-auto' : 'overflow-hidden'
+          } ${
+            transform.zoom > 1 && currentPost.mediaType !== 'video'
+              ? isDraggingPan
+                ? 'cursor-grabbing'
+                : 'cursor-grab'
+              : ''
           }`}
         >
           {mediaError ? (
@@ -549,7 +781,9 @@ export function SlideshowStage({
           ) : currentPost.mediaType === 'video' ? (
             resolvedMediaSrc && (
               <video
+                ref={videoRef}
                 key={resolvedMediaSrc}
+                data-testid="stage-media-element"
                 src={resolvedMediaSrc}
                 preload="auto"
                 controls
@@ -558,7 +792,19 @@ export function SlideshowStage({
                 muted={isMuted}
                 playsInline
                 onLoadedData={() => setMediaLoaded(true)}
+                onLoadedMetadata={(e) => {
+                  setVideoDuration(Number.isFinite(e.currentTarget.duration) ? e.currentTarget.duration : 0);
+                  e.currentTarget.playbackRate = videoRate;
+                  e.currentTarget.volume = videoVolume;
+                }}
+                onTimeUpdate={(e) => setVideoCurrentTime(e.currentTarget.currentTime)}
+                onPlay={() => setVideoPaused(false)}
+                onPause={() => setVideoPaused(true)}
                 onError={() => setMediaError(true)}
+                style={{
+                  transform: mediaTransformCss,
+                  transition: 'transform 120ms ease-out',
+                }}
                 className={fitClass}
               />
             )
@@ -566,14 +812,19 @@ export function SlideshowStage({
             resolvedMediaSrc && (
               <img
                 key={resolvedMediaSrc}
+                data-testid="stage-media-element"
                 src={resolvedMediaSrc}
                 alt={currentPost.tags.slice(0, 8).join(', ') || `Post ${currentPost.id}`}
                 referrerPolicy="no-referrer"
+                draggable={false}
+                onDoubleClick={toggleDoubleClickZoom}
                 onLoad={() => setMediaLoaded(true)}
                 onError={() => setMediaError(true)}
-                className={`${fitClass} transition-opacity duration-150 ${
-                  mediaLoaded ? 'opacity-100' : 'opacity-0'
-                }`}
+                style={{
+                  transform: mediaTransformCss,
+                  transition: isDraggingPan ? 'none' : 'transform 120ms ease-out, opacity 150ms ease',
+                }}
+                className={`${fitClass} ${mediaLoaded ? 'opacity-100' : 'opacity-0'}`}
               />
             )
           )}
@@ -622,7 +873,7 @@ export function SlideshowStage({
             type="button"
             onClick={goPrev}
             aria-label="Previous slide"
-            className={`absolute left-3 top-1/2 -translate-y-1/2 w-11 h-11 rounded-full bg-black/60 hover:bg-black/85 border border-white/10 text-zinc-200 hover:text-white flex items-center justify-center transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+            className={`absolute left-3 top-1/2 -translate-y-1/2 w-11 h-11 rounded-full bg-black/60 hover:bg-black/85 border border-white/10 text-zinc-200 hover:text-white flex items-center justify-center transition-opacity z-20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
               effectiveHudHidden ? 'opacity-0 hover:opacity-100' : 'opacity-85 hover:opacity-100'
             }`}
           >
@@ -633,44 +884,241 @@ export function SlideshowStage({
             type="button"
             onClick={goNext}
             aria-label="Next slide"
-            className={`absolute right-3 top-1/2 -translate-y-1/2 w-11 h-11 rounded-full bg-black/60 hover:bg-black/85 border border-white/10 text-zinc-200 hover:text-white flex items-center justify-center transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+            className={`absolute right-3 top-1/2 -translate-y-1/2 w-11 h-11 rounded-full bg-black/60 hover:bg-black/85 border border-white/10 text-zinc-200 hover:text-white flex items-center justify-center transition-opacity z-20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
               effectiveHudHidden ? 'opacity-0 hover:opacity-100' : 'opacity-85 hover:opacity-100'
             }`}
           >
             <ChevronRight className="w-5 h-5" />
           </button>
 
-          {/* Top-left subtle metadata scrim with File Size */}
+          {/* Top Scrim Row: Metadata on Left + Image/Media Controls on Right (flex-wrap prevents overlap) */}
           {!effectiveHudHidden && (
-            <div
-              data-testid="slide-metadata-scrim"
-              className="absolute top-3 left-3 px-3 py-1.5 rounded-md bg-black/65 backdrop-blur-sm border border-white/10 text-xs text-zinc-300 flex flex-wrap items-center gap-2 pointer-events-none"
-            >
-              <span className="font-mono tabular-nums text-zinc-100">
-                #{currentPost.id}
-              </span>
-              <span aria-hidden="true" className="text-zinc-600">·</span>
-              <span>{BOARD_LABELS[currentPost.board]}</span>
-              <span aria-hidden="true" className="text-zinc-600">·</span>
-              <span className="font-mono tabular-nums">
-                {currentPost.width} × {currentPost.height}
-              </span>
-              {fileSizeBytes !== null && (
-                <>
-                  <span aria-hidden="true" className="text-zinc-600">·</span>
-                  <span className="font-mono tabular-nums text-zinc-200">
-                    {formatBytes(fileSizeBytes)}
-                  </span>
-                </>
-              )}
-              <span aria-hidden="true" className="text-zinc-600">·</span>
-              <span className="uppercase">{currentPost.ext}</span>
-              {wasCacheHit && (
-                <>
-                  <span aria-hidden="true" className="text-zinc-600">·</span>
-                  <span className="text-emerald-400">Cached</span>
-                </>
-              )}
+            <div className="absolute top-3 inset-x-3 flex flex-wrap items-start justify-between gap-2 pointer-events-none z-20">
+              <div
+                data-testid="slide-metadata-scrim"
+                className="px-3 py-1.5 rounded-md bg-black/70 backdrop-blur-sm border border-white/10 text-xs text-zinc-300 flex flex-wrap items-center gap-2"
+              >
+                <span className="font-mono tabular-nums text-zinc-100">
+                  #{currentPost.id}
+                </span>
+                <span aria-hidden="true" className="text-zinc-600">·</span>
+                <span>{BOARD_LABELS[currentPost.board]}</span>
+                <span aria-hidden="true" className="text-zinc-600">·</span>
+                <span className="font-mono tabular-nums">
+                  {currentPost.width} × {currentPost.height}
+                </span>
+                {fileSizeBytes !== null && (
+                  <>
+                    <span aria-hidden="true" className="text-zinc-600">·</span>
+                    <span className="font-mono tabular-nums text-zinc-200">
+                      {formatBytes(fileSizeBytes)}
+                    </span>
+                  </>
+                )}
+                <span aria-hidden="true" className="text-zinc-600">·</span>
+                <span className="uppercase">{currentPost.ext}</span>
+                {wasCacheHit && (
+                  <>
+                    <span aria-hidden="true" className="text-zinc-600">·</span>
+                    <span className="text-emerald-400">Cached</span>
+                  </>
+                )}
+              </div>
+
+              {/* Image & Media Controls Toolbar */}
+              <div
+                data-testid="media-controls-bar"
+                role="toolbar"
+                aria-label="Image and media controls"
+                className="pointer-events-auto max-w-full px-1.5 py-1 rounded-lg bg-black/75 backdrop-blur-sm border border-white/10 shadow-xl flex flex-wrap items-center gap-1 text-xs text-zinc-200"
+              >
+                {currentPost.mediaType === 'video' && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={toggleVideoPlay}
+                      aria-label={videoPaused ? 'Play video' : 'Pause video'}
+                      title={videoPaused ? 'Play video (K)' : 'Pause video (K)'}
+                      className="h-7 w-7 rounded hover:bg-white/10 inline-flex items-center justify-center text-zinc-200 hover:text-white transition-colors"
+                    >
+                      {videoPaused ? <Play className="w-3.5 h-3.5" /> : <Pause className="w-3.5 h-3.5" />}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => seekVideoBy(-5)}
+                      aria-label="Skip back 5 seconds"
+                      title="Back 5s"
+                      className="h-7 px-1.5 rounded hover:bg-white/10 inline-flex items-center gap-0.5 text-[11px] font-mono text-zinc-300 hover:text-white transition-colors"
+                    >
+                      <SkipBack className="w-3 h-3" />
+                      <span>5s</span>
+                    </button>
+
+                    <span
+                      data-testid="video-time-readout"
+                      className="px-1 font-mono tabular-nums text-[11px] text-zinc-300 whitespace-nowrap"
+                    >
+                      {formatMediaDuration(videoCurrentTime)} / {formatMediaDuration(videoDuration)}
+                    </span>
+
+                    <button
+                      type="button"
+                      onClick={() => seekVideoBy(5)}
+                      aria-label="Skip forward 5 seconds"
+                      title="Forward 5s"
+                      className="h-7 px-1.5 rounded hover:bg-white/10 inline-flex items-center gap-0.5 text-[11px] font-mono text-zinc-300 hover:text-white transition-colors"
+                    >
+                      <span>5s</span>
+                      <SkipForward className="w-3 h-3" />
+                    </button>
+
+                    <select
+                      aria-label="Video playback speed"
+                      title="Playback speed"
+                      value={videoRate}
+                      onChange={(e) => setVideoRate(Number(e.target.value))}
+                      className="h-7 px-1.5 rounded bg-zinc-900/90 border border-white/10 text-[11px] font-mono tabular-nums text-zinc-200 focus:outline-none focus:border-blue-500"
+                    >
+                      <option value={0.5}>0.5x</option>
+                      <option value={1}>1x</option>
+                      <option value={1.25}>1.25x</option>
+                      <option value={1.5}>1.5x</option>
+                      <option value={2}>2x</option>
+                    </select>
+
+                    <div className="inline-flex items-center gap-1 px-1">
+                      <button
+                        type="button"
+                        onClick={() => setIsMuted((m) => !m)}
+                        aria-label={isMuted ? 'Unmute video' : 'Mute video'}
+                        title={isMuted ? 'Unmute (M)' : 'Mute (M)'}
+                        className="h-7 w-7 rounded hover:bg-white/10 inline-flex items-center justify-center text-zinc-200 hover:text-white transition-colors"
+                      >
+                        {isMuted || videoVolume === 0 ? (
+                          <VolumeX className="w-3.5 h-3.5" />
+                        ) : (
+                          <Volume2 className="w-3.5 h-3.5" />
+                        )}
+                      </button>
+                      <input
+                        type="range"
+                        min={0}
+                        max={1}
+                        step={0.05}
+                        aria-label="Video volume"
+                        value={isMuted ? 0 : videoVolume}
+                        onChange={(e) => {
+                          const nextVol = Number(e.target.value);
+                          setVideoVolume(nextVol);
+                          if (nextVol > 0 && isMuted) setIsMuted(false);
+                          if (nextVol === 0 && !isMuted) setIsMuted(true);
+                        }}
+                        className="w-14 accent-blue-500 cursor-pointer"
+                      />
+                    </div>
+
+                    <span aria-hidden="true" className="h-4 w-px bg-white/15 mx-0.5" />
+                  </>
+                )}
+
+                <button
+                  type="button"
+                  onClick={zoomOut}
+                  disabled={transform.zoom <= MIN_ZOOM}
+                  aria-label="Zoom out"
+                  title="Zoom out (-)"
+                  className="h-7 w-7 rounded hover:bg-white/10 disabled:opacity-40 disabled:pointer-events-none inline-flex items-center justify-center text-zinc-200 hover:text-white transition-colors"
+                >
+                  <ZoomOut className="w-3.5 h-3.5" />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={resetTransform}
+                  data-testid="zoom-level-badge"
+                  aria-label={`Zoom ${zoomPercent} percent, click to reset`}
+                  title="Click to reset zoom (0) · Double-click image to toggle 200%"
+                  className="h-7 px-2 rounded hover:bg-white/10 font-mono tabular-nums text-[11px] text-zinc-100 min-w-[3.1rem] text-center transition-colors"
+                >
+                  {zoomPercent}%
+                </button>
+
+                <button
+                  type="button"
+                  onClick={zoomIn}
+                  disabled={transform.zoom >= MAX_ZOOM}
+                  aria-label="Zoom in"
+                  title="Zoom in (+)"
+                  className="h-7 w-7 rounded hover:bg-white/10 disabled:opacity-40 disabled:pointer-events-none inline-flex items-center justify-center text-zinc-200 hover:text-white transition-colors"
+                >
+                  <ZoomIn className="w-3.5 h-3.5" />
+                </button>
+
+                <span aria-hidden="true" className="h-4 w-px bg-white/15 mx-0.5" />
+
+                <button
+                  type="button"
+                  onClick={() => rotateBy(-90)}
+                  aria-label="Rotate left 90 degrees"
+                  title="Rotate -90° (Shift+R)"
+                  className="h-7 w-7 rounded hover:bg-white/10 inline-flex items-center justify-center text-zinc-200 hover:text-white transition-colors"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => rotateBy(90)}
+                  aria-label="Rotate right 90 degrees"
+                  title="Rotate +90° (R)"
+                  className="h-7 w-7 rounded hover:bg-white/10 inline-flex items-center justify-center text-zinc-200 hover:text-white transition-colors"
+                >
+                  <RotateCw className="w-3.5 h-3.5" />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={toggleFlipH}
+                  aria-pressed={transform.flipH}
+                  aria-label="Flip horizontal"
+                  title="Flip horizontal"
+                  className={`h-7 w-7 rounded inline-flex items-center justify-center transition-colors ${
+                    transform.flipH
+                      ? 'bg-blue-600/80 text-white'
+                      : 'hover:bg-white/10 text-zinc-200 hover:text-white'
+                  }`}
+                >
+                  <FlipHorizontal2 className="w-3.5 h-3.5" />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={toggleFlipV}
+                  aria-pressed={transform.flipV}
+                  aria-label="Flip vertical"
+                  title="Flip vertical"
+                  className={`h-7 w-7 rounded inline-flex items-center justify-center transition-colors ${
+                    transform.flipV
+                      ? 'bg-blue-600/80 text-white'
+                      : 'hover:bg-white/10 text-zinc-200 hover:text-white'
+                  }`}
+                >
+                  <FlipVertical2 className="w-3.5 h-3.5" />
+                </button>
+
+                {transformModified && (
+                  <button
+                    type="button"
+                    onClick={resetTransform}
+                    aria-label="Reset view"
+                    title="Reset zoom, rotation, and flip (0)"
+                    className="h-7 px-2 rounded bg-zinc-800/90 hover:bg-zinc-700 border border-white/15 text-[11px] font-medium text-zinc-100 transition-colors"
+                  >
+                    Reset
+                  </button>
+                )}
+              </div>
             </div>
           )}
 
@@ -680,7 +1128,7 @@ export function SlideshowStage({
               type="button"
               onClick={() => setHudHidden(false)}
               aria-label="Show slideshow controls"
-              className="absolute bottom-3 right-3 px-3 py-1.5 rounded-md bg-black/70 border border-white/10 text-xs text-zinc-200 hover:text-white inline-flex items-center gap-1.5"
+              className="absolute bottom-3 right-3 px-3 py-1.5 rounded-md bg-black/70 border border-white/10 text-xs text-zinc-200 hover:text-white inline-flex items-center gap-1.5 z-20"
             >
               <Eye className="w-3.5 h-3.5" />
               <span>Show Controls (H)</span>
@@ -759,25 +1207,41 @@ export function SlideshowStage({
               {/* Action Links */}
               <div className="flex flex-wrap gap-2 pt-2 border-t border-zinc-800/80">
                 {!isOfflineLocalMode && (
-                  <button
-                    type="button"
-                    onClick={() => void onSavePost(currentPost)}
-                    disabled={isSaving}
-                    className={`flex-1 py-2 px-3 rounded-md text-xs font-medium inline-flex items-center justify-center gap-1.5 transition-colors ${
-                      isSaved
-                        ? 'bg-emerald-950/60 border border-emerald-700/60 text-emerald-300'
-                        : 'bg-blue-600 hover:bg-blue-500 text-white'
-                    }`}
-                  >
-                    {isSaving ? (
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    ) : isSaved ? (
-                      <Check className="w-3.5 h-3.5" />
-                    ) : (
-                      <Download className="w-3.5 h-3.5" />
-                    )}
-                    <span>{isSaved ? 'Saved Locally' : 'Save to Gallery'}</span>
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => onToggleFavorite(currentPost)}
+                      aria-pressed={isFavorited}
+                      className={`py-2 px-3 border rounded-md text-xs font-medium inline-flex items-center gap-1.5 transition-colors ${
+                        isFavorited
+                          ? 'bg-rose-950/60 border-rose-700/60 text-rose-300'
+                          : 'bg-zinc-900 hover:bg-zinc-800 border-zinc-700 text-zinc-200'
+                      }`}
+                    >
+                      <Heart className={`w-3.5 h-3.5 ${isFavorited ? 'fill-rose-400 text-rose-400' : ''}`} />
+                      <span>{isFavorited ? 'Favorited' : 'Favorite'}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => void onSavePost(currentPost)}
+                      disabled={isSaving}
+                      className={`flex-1 py-2 px-3 rounded-md text-xs font-medium inline-flex items-center justify-center gap-1.5 transition-colors ${
+                        isSaved
+                          ? 'bg-emerald-950/60 border border-emerald-700/60 text-emerald-300'
+                          : 'bg-blue-600 hover:bg-blue-500 text-white'
+                      }`}
+                    >
+                      {isSaving ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : isSaved ? (
+                        <Check className="w-3.5 h-3.5" />
+                      ) : (
+                        <Download className="w-3.5 h-3.5" />
+                      )}
+                      <span>{isSaved ? 'Saved Locally' : 'Save to Gallery'}</span>
+                    </button>
+                  </>
                 )}
 
                 <button
@@ -1025,25 +1489,44 @@ export function SlideshowStage({
               </button>
 
               {!isOfflineLocalMode && (
-                <button
-                  type="button"
-                  onClick={() => void onSavePost(currentPost)}
-                  disabled={isSaving}
-                  className={`h-9 px-3.5 rounded-md text-xs font-medium inline-flex items-center gap-1.5 border transition-colors whitespace-nowrap shrink-0 ${
-                    isSaved
-                      ? 'bg-emerald-950/50 border-emerald-700/60 text-emerald-300'
-                      : 'bg-zinc-900 hover:bg-zinc-800 border-zinc-700 text-zinc-100'
-                  }`}
-                >
-                  {isSaving ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  ) : isSaved ? (
-                    <Check className="w-3.5 h-3.5" />
-                  ) : (
-                    <Download className="w-3.5 h-3.5" />
-                  )}
-                  <span>{isSaved ? 'Saved' : 'Save to Gallery'}</span>
-                </button>
+                <>
+                  <button
+                    type="button"
+                    data-testid="favorite-toggle-btn"
+                    onClick={() => onToggleFavorite(currentPost)}
+                    aria-pressed={isFavorited}
+                    aria-label={isFavorited ? 'Remove from favorites' : 'Add to favorites'}
+                    title="Bookmark to Favorites without downloading (L)"
+                    className={`h-9 px-3 rounded-md text-xs font-medium inline-flex items-center gap-1.5 border transition-colors whitespace-nowrap shrink-0 ${
+                      isFavorited
+                        ? 'bg-rose-950/50 border-rose-700/60 text-rose-300'
+                        : 'bg-zinc-950 hover:bg-zinc-900 border-zinc-800 text-zinc-200'
+                    }`}
+                  >
+                    <Heart className={`w-3.5 h-3.5 ${isFavorited ? 'fill-rose-400 text-rose-400' : ''}`} />
+                    <span>{isFavorited ? 'Favorited' : 'Favorite'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => void onSavePost(currentPost)}
+                    disabled={isSaving}
+                    className={`h-9 px-3.5 rounded-md text-xs font-medium inline-flex items-center gap-1.5 border transition-colors whitespace-nowrap shrink-0 ${
+                      isSaved
+                        ? 'bg-emerald-950/50 border-emerald-700/60 text-emerald-300'
+                        : 'bg-zinc-900 hover:bg-zinc-800 border-zinc-700 text-zinc-100'
+                    }`}
+                  >
+                    {isSaving ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : isSaved ? (
+                      <Check className="w-3.5 h-3.5" />
+                    ) : (
+                      <Download className="w-3.5 h-3.5" />
+                    )}
+                    <span>{isSaved ? 'Saved' : 'Save to Gallery'}</span>
+                  </button>
+                </>
               )}
 
               <button
@@ -1107,6 +1590,7 @@ export function SlideshowStage({
                 const isActive = idx === currentIndex;
                 const key = `${post.board}_${post.id}`;
                 const thumbSaved = savedKeys.has(key);
+                const thumbFavorited = favoriteKeys.has(key);
                 const thumbCached = sharedMediaCache.has(getMediaSrc(post, 'full'));
                 return (
                   <button
@@ -1134,6 +1618,14 @@ export function SlideshowStage({
                         title="Preloaded in cache"
                         className="absolute top-1 left-1 w-1.5 h-1.5 rounded-full bg-sky-400"
                       />
+                    )}
+                    {thumbFavorited && (
+                      <span
+                        aria-label="Favorited"
+                        className="absolute top-1 right-1 w-4 h-4 rounded-sm bg-rose-600/90 text-white flex items-center justify-center"
+                      >
+                        <Heart className="w-2.5 h-2.5 fill-current" />
+                      </span>
                     )}
                     {thumbSaved && (
                       <span

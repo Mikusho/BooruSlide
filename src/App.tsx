@@ -20,6 +20,14 @@ import {
   type TagPreset,
 } from './lib/booru';
 import { copyTextToClipboard, getCopyableFileUrl } from './lib/clipboard';
+import {
+  getPostKey,
+  loadFavorites,
+  removeFavoritePost,
+  saveFavorites,
+  toggleFavoritePost,
+  type FavoritePost,
+} from './lib/favorites';
 import { pickBrowserGalleryDirectory, writeMediaToBrowserDirectory } from './lib/fsAccess';
 import {
   BUILTIN_PRESETS,
@@ -33,6 +41,7 @@ import { TopBar } from './components/TopBar';
 import { TagFilterBar } from './components/TagFilterBar';
 import { SlideshowStage } from './components/SlideshowStage';
 import { GridGallery } from './components/GridGallery';
+import { FavoritesView } from './components/FavoritesView';
 import { LocalGalleryView } from './components/LocalGalleryView';
 import { PresetsView } from './components/PresetsView';
 import { SettingsModal } from './components/SettingsModal';
@@ -79,8 +88,10 @@ export default function App() {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
 
-  // Offline local slideshow override
+  // Offline local slideshow & Favorites slideshow overrides
   const [offlineLocalPosts, setOfflineLocalPosts] = useState<BooruPost[] | null>(null);
+  const [favorites, setFavorites] = useState<FavoritePost[]>(() => loadFavorites());
+  const [favoritesSlideshowPosts, setFavoritesSlideshowPosts] = useState<BooruPost[] | null>(null);
 
   // Grid selection
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
@@ -143,6 +154,14 @@ export default function App() {
     }
     return keys;
   }, [localItems]);
+
+  const favoriteKeys = useMemo(() => {
+    const keys = new Set<string>();
+    for (const item of favorites) {
+      keys.add(getPostKey(item));
+    }
+    return keys;
+  }, [favorites]);
 
   // Fetch posts across one or multiple enabled sources
   const fetchPosts = useCallback(
@@ -265,6 +284,7 @@ export default function App() {
       mediaVal?: MediaType[];
     }) => {
       setOfflineLocalPosts(null);
+      setFavoritesSlideshowPosts(null);
       void fetchPosts({
         tags: overrides?.tags ?? queryTags,
         sources: overrides?.sources ?? settings.sources,
@@ -561,7 +581,47 @@ export default function App() {
       mediaType: item.mediaType,
       ext: item.ext,
     }));
+    setFavoritesSlideshowPosts(null);
     setOfflineLocalPosts(mapped);
+    setCurrentIndex(startIndex);
+    setActiveView('slideshow');
+  }, []);
+
+  const handleToggleFavorite = useCallback(
+    (post: BooruPost) => {
+      if (post.fileUrl.startsWith('/api/')) return;
+      setFavorites((prev) => {
+        const { next, added } = toggleFavoritePost(prev, post);
+        saveFavorites(next);
+        showToast(added ? 'Added to Favorites (not downloaded)' : 'Removed from Favorites');
+        return next;
+      });
+    },
+    [showToast]
+  );
+
+  const handleRemoveFavorite = useCallback(
+    (post: FavoritePost) => {
+      setFavorites((prev) => {
+        const next = removeFavoritePost(prev, post);
+        saveFavorites(next);
+        return next;
+      });
+      showToast('Removed from Favorites');
+    },
+    [showToast]
+  );
+
+  const handleClearFavorites = useCallback(() => {
+    setFavorites([]);
+    saveFavorites([]);
+    setFavoritesSlideshowPosts(null);
+    showToast('Cleared all favorites');
+  }, [showToast]);
+
+  const handleLaunchFavoritesSlideshow = useCallback((items: FavoritePost[], startIndex: number) => {
+    setOfflineLocalPosts(null);
+    setFavoritesSlideshowPosts(items);
     setCurrentIndex(startIndex);
     setActiveView('slideshow');
   }, []);
@@ -657,8 +717,9 @@ export default function App() {
     });
   }, [queryTags, singleOrAllRating, settings.sources, handleCreatePreset]);
 
-  const activeSlides = offlineLocalPosts ?? filteredPosts;
+  const activeSlides = offlineLocalPosts ?? favoritesSlideshowPosts ?? filteredPosts;
   const isOfflineLocalMode = offlineLocalPosts !== null;
+  const isFavoritesSlideshowMode = favoritesSlideshowPosts !== null && !isOfflineLocalMode;
 
   return (
     <div className="h-screen w-screen flex flex-col bg-[#09090B] text-[#F4F4F5] overflow-hidden">
@@ -670,12 +731,13 @@ export default function App() {
             setIsPlaying(false);
           }
         }}
+        favoritesCount={favorites.length}
         localCount={localItems.length}
         onOpenSettings={() => setIsSettingsOpen(true)}
       />
 
-      {/* Search & Tag Filter Bar shown on Slideshow (when live) and Grid views */}
-      {(activeView === 'grid' || (activeView === 'slideshow' && !isOfflineLocalMode)) && (
+      {/* Search & Tag Filter Bar shown on Slideshow (when live search) and Grid views */}
+      {(activeView === 'grid' || (activeView === 'slideshow' && !isOfflineLocalMode && !isFavoritesSlideshowMode)) && (
         <TagFilterBar
           queryTags={queryTags}
           onQueryTagsChange={setQueryTags}
@@ -715,6 +777,25 @@ export default function App() {
             type="button"
             onClick={() => {
               setOfflineLocalPosts(null);
+              setCurrentIndex(0);
+            }}
+            className="text-blue-400 hover:text-blue-300 font-medium"
+          >
+            Return to Live Search Slideshow
+          </button>
+        </div>
+      )}
+
+      {/* Favorites Slideshow Banner */}
+      {activeView === 'slideshow' && isFavoritesSlideshowMode && (
+        <div className="px-4 lg:px-6 py-2 bg-[#111114] border-b border-zinc-800 flex items-center justify-between gap-4 text-xs shrink-0">
+          <span className="text-zinc-300">
+            Playing from <strong className="font-semibold text-white">Favorites</strong> ({favoritesSlideshowPosts.length} bookmarked posts — streamed online, not downloaded)
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              setFavoritesSlideshowPosts(null);
               setCurrentIndex(0);
             }}
             className="text-blue-400 hover:text-blue-300 font-medium"
@@ -794,14 +875,17 @@ export default function App() {
             preloadCount={settings.preloadCount}
             autoHideHud={settings.autoHideHud}
             isLoading={isLoading}
-            hasMore={hasMore}
+            hasMore={hasMore && !isFavoritesSlideshowMode}
             onLoadMore={handleLoadMore}
             onSavePost={handleSavePost}
             onCopyFileLink={handleCopyFileLink}
+            onToggleFavorite={handleToggleFavorite}
             savingIds={savingIds}
             savedKeys={savedKeys}
+            favoriteKeys={favoriteKeys}
             onSearchTag={(tag) => {
               setOfflineLocalPosts(null);
+              setFavoritesSlideshowPosts(null);
               setQueryTags(tag);
               triggerFreshSearch({ tags: tag });
             }}
@@ -838,14 +922,17 @@ export default function App() {
             onLoadMore={handleLoadMore}
             onOpenSlide={(idx) => {
               setOfflineLocalPosts(null);
+              setFavoritesSlideshowPosts(null);
               setCurrentIndex(idx);
               setActiveView('slideshow');
             }}
             onSavePost={handleSavePost}
             onCopyFileLink={handleCopyFileLink}
+            onToggleFavorite={handleToggleFavorite}
             onBatchSave={handleBatchSave}
             savingIds={savingIds}
             savedKeys={savedKeys}
+            favoriteKeys={favoriteKeys}
             selectedKeys={selectedKeys}
             onToggleSelect={(key) => {
               setSelectedKeys((prev) => {
@@ -860,6 +947,20 @@ export default function App() {
             }}
             onClearSelection={() => setSelectedKeys(new Set())}
             isBatchSaving={isBatchSaving}
+            getMediaSrc={getMediaSrc}
+          />
+        )}
+
+        {activeView === 'favorites' && (
+          <FavoritesView
+            items={favorites}
+            onLaunchSlideshow={handleLaunchFavoritesSlideshow}
+            onRemoveFavorite={handleRemoveFavorite}
+            onClearFavorites={handleClearFavorites}
+            onSavePost={handleSavePost}
+            onCopyFileLink={handleCopyFileLink}
+            savingIds={savingIds}
+            savedKeys={savedKeys}
             getMediaSrc={getMediaSrc}
           />
         )}

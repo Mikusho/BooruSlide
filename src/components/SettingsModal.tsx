@@ -356,7 +356,7 @@ export function SettingsModal({
 
         <div className="px-6 py-3.5 border-t border-zinc-800 bg-[#09090B] flex items-center justify-between shrink-0">
           <span className="text-xs text-zinc-500">
-            Hotkeys: Space Play/Pause · ←/→ Navigate · D Save · C Copy Link · I Tags · H Hide HUD · F Fullscreen
+            Hotkeys: Space Play/Pause · ←/→ Navigate · +/− Zoom · R Rotate · 0 Reset · L Favorite · D Save · C Copy Link · I Tags · H Hide HUD · F Fullscreen
           </span>
           <button
             type="button"

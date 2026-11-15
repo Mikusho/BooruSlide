@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { Check, CheckSquare, Copy, Download, Loader2, Play, Square } from 'lucide-react';
+import { Check, CheckSquare, Copy, Download, Heart, Loader2, Play, Square } from 'lucide-react';
 import { BOARD_LABELS } from '../lib/booru';
 import type { BooruPost } from '../types/booru';
 
@@ -11,9 +11,11 @@ interface GridGalleryProps {
   onOpenSlide: (index: number) => void;
   onSavePost: (post: BooruPost) => Promise<void>;
   onCopyFileLink: (post: BooruPost) => Promise<boolean>;
+  onToggleFavorite: (post: BooruPost) => void;
   onBatchSave: (posts: BooruPost[]) => Promise<void>;
   savingIds: Set<string>;
   savedKeys: Set<string>;
+  favoriteKeys: Set<string>;
   selectedKeys: Set<string>;
   onToggleSelect: (key: string) => void;
   onSelectAll: () => void;
@@ -30,9 +32,11 @@ export function GridGallery({
   onOpenSlide,
   onSavePost,
   onCopyFileLink,
+  onToggleFavorite,
   onBatchSave,
   savingIds,
   savedKeys,
+  favoriteKeys,
   selectedKeys,
   onToggleSelect,
   onSelectAll,
@@ -138,6 +142,7 @@ export function GridGallery({
             const isSelected = selectedKeys.has(key);
             const isSaved = savedKeys.has(key);
             const isSaving = savingIds.has(key);
+            const isFavorited = favoriteKeys.has(key);
 
             return (
               <article
@@ -177,8 +182,22 @@ export function GridGallery({
                     {isSelected ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4" />}
                   </button>
 
-                  {/* Top-right Copy Link + Save buttons */}
+                  {/* Top-right Favorite + Copy Link + Save buttons */}
                   <div className="absolute top-2 right-2 flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => onToggleFavorite(post)}
+                      aria-pressed={isFavorited}
+                      aria-label={isFavorited ? `Remove post ${post.id} from favorites` : `Add post ${post.id} to favorites`}
+                      title={isFavorited ? 'Remove from favorites' : 'Bookmark to favorites (no download)'}
+                      className={`h-7 w-7 rounded inline-flex items-center justify-center border transition-opacity ${
+                        isFavorited
+                          ? 'opacity-100 bg-rose-950/90 border-rose-700/80 text-rose-300'
+                          : 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100 bg-black/75 border-white/15 text-zinc-100 hover:bg-zinc-800'
+                      }`}
+                    >
+                      <Heart className={`w-3 h-3 ${isFavorited ? 'fill-rose-400 text-rose-400' : ''}`} />
+                    </button>
                     <button
                       type="button"
                       onClick={() => void handleCopyClick(post, key)}
