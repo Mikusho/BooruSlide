@@ -792,7 +792,7 @@ async function startServer() {
   const httpServer = createServer(app);
 
   if (process.env.NODE_ENV === 'production') {
-    const distDir = path.resolve(process.cwd(), 'dist');
+    const distDir = path.resolve(process.env.BOORUSLIDE_DIST_DIR || path.join(process.cwd(), 'dist'));
     app.use(express.static(distDir));
     app.get('*', (_req, res) => {
       res.sendFile(path.join(distDir, 'index.html'));
@@ -809,8 +809,9 @@ async function startServer() {
     app.use(vite.middlewares);
   }
 
-  httpServer.listen(PORT, '0.0.0.0', () => {
-    console.log(`BooruSlide server listening on http://localhost:${PORT} (gallery: ${activeGalleryDir})`);
+  const host = process.env.HOST || '0.0.0.0';
+  httpServer.listen(PORT, host, () => {
+    console.log(`BooruSlide server listening on http://${host === '0.0.0.0' ? 'localhost' : host}:${PORT} (gallery: ${activeGalleryDir})`);
   });
 }
 

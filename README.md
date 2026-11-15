@@ -88,12 +88,28 @@ A web-based slideshow theater and collection browser inspired by [BooruSlideshow
    npm start
    ```
 
+### Desktop App & Windows `.exe` Build
+
+Launch BooruSlide in a standalone Electron desktop window:
+```bash
+npm run desktop
+```
+
+Build Windows `.exe` packages (both an NSIS installer and a portable `.exe` in `dist-electron/`):
+```bash
+npm run build:exe
+```
+> On Windows desktop builds, downloaded files default to `%USERPROFILE%\Pictures\BooruSlide` (configurable anytime in **Settings**).
+
 ## Scripts & Verification
 
 | Command | Description |
 | --- | --- |
 | `npm run dev` | Start Express + Vite middleware dev server on port `3000` |
 | `npm run build` | Build production frontend bundle into `dist/` |
+| `npm run build:server` | Bundle `server.ts` into `build/server.cjs` for desktop packaging |
+| `npm run desktop` | Build frontend + server bundle and launch the Electron desktop window |
+| `npm run build:exe` | Package Windows installer & portable `.exe` into `dist-electron/` |
 | `npm start` | Serve production `dist/` assets and `/api/*` endpoints |
 | `npm run lint` | Type-check the codebase with `tsc --noEmit` |
 
