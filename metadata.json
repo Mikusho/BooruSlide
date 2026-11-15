@@ -1,0 +1,6 @@
+{
+  "name": "BooruSlide",
+  "description": "High-speed image collection slideshow and gallery browser with Gelbooru API tag filtering and direct local gallery folder downloads.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
